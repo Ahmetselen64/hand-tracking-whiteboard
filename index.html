@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>AHMET Pen</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+    video { display: none; }
+    
+    canvas { width: 100%; height: 100%; transform: scaleX(-1); position: absolute; z-index: 1; }
+  </style>
+</head>
+<body>
+  <video id="vid"></video>
+  <canvas id="c"></canvas>
+
+  <script>
+    const vid = document.getElementById('vid');
+    const c = document.getElementById('c');
+    const ctx = c.getContext('2d');
+
+    
+    let arr = [];         
+    let curPoints = [];   
+    let shift = false;    
+    let ctrl = false;     
+    let draw = false;     
+    let sx = null, sy = null; 
+
+    
+    let penColor = '#F5D061'; 
+    const colors = [
+      { color: '#F5D061' }, 
+      { color: '#FF0000' }, 
+      { color: '#00FF00' }, 
+      { color: '#0000FF' }, 
+      { color: '#FFFFFF' }  
+    ];
+
+    
+    window.onkeydown = (e) => {
+      if (e.key === 'Shift') shift = true;
+      if (e.key === 'Control') ctrl = true;
+      if (e.code === 'Space') arr = []; 
+      if (e.key === 's' || e.key === 'S') saveCanvas(); 
+    };
+    window.onkeyup = (e) => {
+      if (e.key === 'Shift') shift = false;
+      if (e.key === 'Control') ctrl = false;
+    };
+
+    
+    function saveCanvas() {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = c.width;
+      tempCanvas.height = c.height;
+      const tCtx = tempCanvas.getContext('2d');
+      
+      
+      tCtx.translate(c.width, 0);
+      tCtx.scale(-1, 1);
+      tCtx.drawImage(c, 0, 0);
+
+      const link = document.createElement('a');
+      link.download = 'ahmet_cizim.png';
+      link.href = tempCanvas.toDataURL();
+      link.click();
+    }
+
+    
+    function run(res) {
+      c.width = window.innerWidth;
+      c.height = window.innerHeight;
+      
+      
+      ctx.drawImage(res.image, 0, 0, c.width, c.height);
+      ctx.fillStyle = 'rgba(10, 6, 2, 0.85)';
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      
+      if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        const lm = res.multiHandLandmarks[0];
+        const ind = lm[8]; 
+        const rx = ind.x * c.width;
+        const ry = ind.y * c.height;
+
+        
+        if (sx === null) { sx = rx; sy = ry; } 
+        else { sx += (rx - sx) * 0.45; sy += (ry - sy) * 0.45; }
+
+        
+        for (let i = 0; i < colors.length; i++) {
+          let bx = 20 + (i * 80), by = 20, bw = 70, bh = 45;
+          if (sx > bx && sx < bx + bw && sy > by && sy < by + bh) {
+            penColor = colors[i].color;
+          }
+          
+          ctx.fillStyle = colors[i].color;
+          ctx.globalAlpha = (penColor === colors[i].color) ? 1.0 : 0.3;
+          ctx.fillRect(bx, by, bw, bh);
+          if (penColor === colors[i].color) {
+            ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+          }
+        }
+        ctx.globalAlpha = 1.0;
+
+        
+        if (ctrl) {
+          for (let i = 0; i < arr.length; i++) {
+            arr[i].points = arr[i].points.filter(pt => {
+              return Math.sqrt(Math.pow(pt.x - sx, 2) + Math.pow(pt.y - sy, 2)) > 50;
+            });
+          }
+        }
+
+        
+        if (shift && !ctrl) {
+          if (!draw) {
+            draw = true;
+            curPoints = [];
+            arr.push({ points: curPoints, color: penColor });
+          }
+          curPoints.push({ x: sx, y: sy });
+        } else {
+          draw = false;
+        }
+      } else {
+        sx = null; sy = null; draw = false;
+      }
+
+      
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 6;
+      ctx.shadowBlur = 15;
+
+      for (let i = 0; i < arr.length; i++) {
+        ctx.strokeStyle = arr[i].color;
+        ctx.shadowColor = arr[i].color;
+        ctx.beginPath();
+        for (let j = 0; j < arr[i].points.length; j++) {
+          const p = arr[i].points[j];
+          if (j === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+      }
+
+      
+      if (sx !== null) {
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 8, 0, 7);
+        if (ctrl) ctx.fillStyle = '#FF0000';
+        else if (shift) ctx.fillStyle = '#FFFFFF';
+        else ctx.fillStyle = penColor;
+        ctx.fill();
+      }
+    }
+
+    
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(run);
+
+    const camera = new Camera(vid, {
+      onFrame: async () => { await hands.send({ image: vid }); },
+      width: 1280, height: 720
+    });
+    camera.start();
+  </script>
+</body>
+</html>
